@@ -12,15 +12,14 @@ import (
 
 // Config 应用配置
 type Config struct {
-	Proxy  ProxyConfig  `json:"proxy"`
-	UI     UIConfig     `json:"ui"`
-	DNS    DNSConfig    `json:"dns"`
-	SpeedTest SpeedTestConfig `json:"speed_test"`
-	Update UpdateConfig `json:"update"`
-	CACertPath string   `json:"ca_cert_path"`
-	CAKeyPath  string   `json:"ca_key_path"`
-	CertDir    string   `json:"cert_dir"`
-	Domains    []DomainConfig `json:"domains"`
+	Proxy      ProxyConfig      `json:"proxy"`
+	UI         UIConfig         `json:"ui"`
+	SpeedTest  SpeedTestConfig  `json:"speed_test"`
+	Update     UpdateConfig     `json:"update"`
+	CACertPath string           `json:"ca_cert_path"`
+	CAKeyPath  string           `json:"ca_key_path"`
+	CertDir    string           `json:"cert_dir"`
+	Domains    []DomainConfig   `json:"domains"`
 }
 
 // ProxyConfig 代理配置
@@ -40,12 +39,6 @@ func (p *ProxyConfig) SystemProxyEnabled() bool {
 // UIConfig Web UI 配置
 type UIConfig struct {
 	Listen string `json:"listen"`
-}
-
-// DNSConfig DNS 配置
-type DNSConfig struct {
-	Server   string   `json:"server"`
-	Upstreams []string `json:"upstreams"`
 }
 
 // SpeedTestConfig 测速配置
@@ -109,12 +102,6 @@ func (m *Manager) Load() error {
 	}
 	if cfg.UI.Listen == "" {
 		cfg.UI.Listen = "127.0.0.1:38458"
-	}
-	if cfg.DNS.Server == "" {
-		cfg.DNS.Server = "223.5.5.5:53"
-	}
-	if len(cfg.DNS.Upstreams) == 0 {
-		cfg.DNS.Upstreams = []string{"8.8.8.8:53", "1.1.1.1:53"}
 	}
 	if cfg.SpeedTest.Concurrent == 0 {
 		cfg.SpeedTest.Concurrent = 10

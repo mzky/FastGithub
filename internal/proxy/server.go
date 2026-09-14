@@ -11,7 +11,6 @@ import (
 	"time"
 
 	"github.com/creazyboyone/fastgithub/internal/config"
-	"github.com/creazyboyone/fastgithub/internal/dns"
 	"github.com/creazyboyone/fastgithub/internal/flow"
 	"github.com/creazyboyone/fastgithub/internal/logger"
 	"github.com/creazyboyone/fastgithub/internal/speed"
@@ -20,27 +19,25 @@ import (
 
 // Server HTTP/HTTPS 代理服务器
 type Server struct {
-	cfg      *config.Manager
-	resolver *dns.Resolver
-	tester   *speed.Tester
-	certMgr  *tlscert.CertManager
-	flow     *flow.Analyzer
-	logBuf   *logger.Buffer
-	server   *http.Server
-	proxy    *httputil.ReverseProxy
+	cfg     *config.Manager
+	tester  *speed.Tester
+	certMgr *tlscert.CertManager
+	flow    *flow.Analyzer
+	logBuf  *logger.Buffer
+	server  *http.Server
+	proxy   *httputil.ReverseProxy
 }
 
 // NewServer 创建代理服务器
-func NewServer(cfg *config.Manager, resolver *dns.Resolver, tester *speed.Tester,
+func NewServer(cfg *config.Manager, tester *speed.Tester,
 	certMgr *tlscert.CertManager, flow *flow.Analyzer, logBuf *logger.Buffer) *Server {
 
 	s := &Server{
-		cfg:      cfg,
-		resolver: resolver,
-		tester:   tester,
-		certMgr:  certMgr,
-		flow:     flow,
-		logBuf:   logBuf,
+		cfg:     cfg,
+		tester:  tester,
+		certMgr: certMgr,
+		flow:    flow,
+		logBuf:  logBuf,
 	}
 
 	transport := &http.Transport{

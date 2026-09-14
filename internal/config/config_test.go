@@ -12,7 +12,6 @@ func TestNewManager(t *testing.T) {
 	cfgContent := `{
   "proxy": { "listen": "127.0.0.1:38457" },
   "cert_dir": "cacert",
-  "dns": { "upstreams": ["8.8.8.8:53"] },
   "update": { "repo": "test/repo" },
   "domains": [
     {
@@ -34,9 +33,6 @@ func TestNewManager(t *testing.T) {
 	cfg := m.Get()
 	if cfg.Proxy.Listen != "127.0.0.1:38457" {
 		t.Errorf("expected listen 127.0.0.1:38457, got %s", cfg.Proxy.Listen)
-	}
-	if len(cfg.DNS.Upstreams) != 1 {
-		t.Errorf("expected 1 dns upstream, got %d", len(cfg.DNS.Upstreams))
 	}
 	if cfg.Update.Repo != "test/repo" {
 		t.Errorf("expected update repo test/repo, got %s", cfg.Update.Repo)
@@ -213,9 +209,6 @@ func TestDefaults(t *testing.T) {
 	}
 	if cfg.CertDir != "cacert" {
 		t.Errorf("default cert_dir: expected cacert, got %s", cfg.CertDir)
-	}
-	if len(cfg.DNS.Upstreams) != 2 {
-		t.Errorf("default dns upstreams: expected 2, got %d", len(cfg.DNS.Upstreams))
 	}
 	if cfg.SpeedTest.Concurrent != 10 {
 		t.Errorf("default speed_test concurrent: expected 10, got %d", cfg.SpeedTest.Concurrent)

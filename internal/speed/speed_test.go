@@ -10,30 +10,28 @@ import (
 	"net"
 	"testing"
 	"time"
-
-	"github.com/creazyboyone/fastgithub/internal/dns"
 )
 
 func TestNewTester(t *testing.T) {
-	resolver := dns.NewResolver([]string{"8.8.8.8:53"})
-	tester := NewTester(resolver)
+	tester := NewTester()
+	defer tester.Stop()
 	if tester == nil {
 		t.Fatal("NewTester returned nil")
 	}
 }
 
 func TestClearCache(t *testing.T) {
-	resolver := dns.NewResolver([]string{"8.8.8.8:53"})
-	tester := NewTester(resolver)
+	tester := NewTester()
+	defer tester.Stop()
 
 	tester.mu.Lock()
-	tester.cache["test.com"] = &cacheItem{}
+	tester.best["test.com"] = bestEntry{ip: net.ParseIP("1.1.1.1"), updated: time.Now()}
 	tester.mu.Unlock()
 
 	tester.ClearCache()
 
 	tester.mu.RLock()
-	count := len(tester.cache)
+	count := len(tester.best)
 	tester.mu.RUnlock()
 
 	if count != 0 {
@@ -41,7 +39,7 @@ func TestClearCache(t *testing.T) {
 	}
 }
 
-func TestMeasureBestIntegration(t *testing.T) {
+func TestMeasureDomainIntegration(t *testing.T) {
 	if testing.Short() {
 		t.Skip("skipping integration test in short mode")
 	}
@@ -70,23 +68,23 @@ func TestMeasureBestIntegration(t *testing.T) {
 	}()
 
 	addr := listener.Addr().String()
-	host, port, _ := net.SplitHostPort(addr)
+	host, _, _ := net.SplitHostPort(addr)
 	ip := net.ParseIP(host)
 
-	resolver := dns.NewResolver([]string{"8.8.8.8:53"})
-	tester := NewTester(resolver)
+	tester := NewTester()
+	defer tester.Stop()
 
-	best, err := tester.measureBest("localhost", []net.IP{ip})
+	best, err := tester.measureDomain("localhost", []net.IP{ip})
 	if err != nil {
-		t.Fatalf("measureBest error: %v", err)
+		t.Fatalf("measureDomain error: %v", err)
 	}
 	if best == nil {
-		t.Error("measureBest returned nil")
+		t.Error("measureDomain returned nil")
 	}
 	if !best.Equal(ip) {
 		t.Errorf("expected best IP %s, got %s", ip, best)
 	}
-	t.Logf("best IP: %s, port: %s", best, port)
+	t.Logf("best IP: %s", best)
 }
 
 // generateSelfSignedCert 生成自签证书用于测试
@@ -119,34 +117,4 @@ func generateSelfSignedCert() (tls.Certificate, error) {
 		Certificate: [][]byte{certDER},
 		PrivateKey:  key,
 	}, nil
-}
-
-func TestProbeIntegration(t *testing.T) {
-	if testing.Short() {
-		t.Skip("skipping integration test in short mode")
-	}
-
-	resolver := dns.NewResolver([]string{"8.8.8.8:53"})
-	tester := NewTester(resolver)
-
-	ips, err := resolver.Resolve("example.com")
-	if err != nil {
-		t.Skipf("resolve example.com failed: %v", err)
-	}
-	if len(ips) == 0 {
-		t.Skip("no IPs for example.com")
-	}
-
-	rtt, err := tester.probe("example.com", ips[0])
-	if err != nil {
-		t.Logf("probe error (may be network issue): %v", err)
-		return
-	}
-	if rtt <= 0 {
-		t.Error("probe returned zero or negative RTT")
-	}
-	if rtt > 30*time.Second {
-		t.Errorf("probe RTT too long: %v", rtt)
-	}
-	t.Logf("probe RTT: %v", rtt)
 }

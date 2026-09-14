@@ -6,17 +6,6 @@
   "ui": {
     "listen": "127.0.0.1:38458"
   },
-  "dns": {
-    "server": "223.5.5.5:53",
-    "upstreams": [
-      "https://dns.alidns.com/resolve",
-      "223.5.5.5:853",
-      "223.6.6.6:853",
-      "8.8.8.8:53",
-      "1.1.1.1:53",
-      "system"
-    ]
-  },
   "speed_test": {
     "concurrent": 10,
     "timeout": 2000000000,

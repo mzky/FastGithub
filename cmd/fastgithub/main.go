@@ -10,7 +10,6 @@ import (
 	"time"
 
 	"github.com/creazyboyone/fastgithub/internal/config"
-	"github.com/creazyboyone/fastgithub/internal/dns"
 	"github.com/creazyboyone/fastgithub/internal/flow"
 	"github.com/creazyboyone/fastgithub/internal/logger"
 	"github.com/creazyboyone/fastgithub/internal/proxy"
@@ -21,7 +20,6 @@ import (
 	"github.com/creazyboyone/fastgithub/internal/ui"
 	"github.com/creazyboyone/fastgithub/internal/updater"
 	"github.com/creazyboyone/fastgithub/internal/version"
-	"strings"
 )
 
 func main() {
@@ -60,23 +58,18 @@ func main() {
 	}
 	logBuf.Info("[main] CA 证书加载成功 (路径: %s)", certDir)
 
-	// 3. 初始化 DNS 解析器（自动识别上游类型）
-	dnsUpstreams := buildDNSUpstreams(cfg.Get().DNS.Upstreams)
-	resolver := dns.NewResolverWithUpstreams(dnsUpstreams)
-	logBuf.Info("[main] DNS 解析器初始化完成（%d 个上游）", len(dnsUpstreams))
+	// 3. 初始化 IP 池测速器（后台探测 GitHub 官方 IP 池，无需 DNS）
+	tester := speed.NewTester()
+	logBuf.Info("[main] GitHub IP 池测速器初始化完成")
 
-	// 4. 初始化测速器
-	tester := speed.NewTester(resolver)
-	logBuf.Info("[main] IP 测速器初始化完成")
-
-	// 5. 初始化流量分析器
+	// 4. 初始化流量分析器
 	flowAnalyzer := flow.NewAnalyzer()
 	flowAnalyzer.Start()
 	logBuf.Info("[main] 流量统计模块启动")
 
 	// 6. 启动代理服务器
 	proxyAddr := cfg.Get().Proxy.Listen
-	proxyServer := proxy.NewServer(cfg, resolver, tester, certMgr, flowAnalyzer, logBuf)
+	proxyServer := proxy.NewServer(cfg, tester, certMgr, flowAnalyzer, logBuf)
 
 	proxyErr := make(chan error, 1)
 	go func() {
@@ -139,7 +132,7 @@ func main() {
 		// 托盘模式：systray.Run 必须在主 goroutine 中运行（阻塞）
 		trayMgr := tray.New(flowAnalyzer, logBuf, proxyAddr, uiAddr)
 		trayMgr.SetOnQuit(func() {
-			shutdown(proxyServer, uiServer, flowAnalyzer)
+			shutdown(proxyServer, uiServer, flowAnalyzer, tester)
 			os.Exit(0)
 		})
 		trayMgr.SetOnCheckUpdate(func() {
@@ -165,13 +158,13 @@ func main() {
 			logBuf.Info("[main] 收到信号 %v，正在关闭...", sig)
 		}
 
-		shutdown(proxyServer, uiServer, flowAnalyzer)
+		shutdown(proxyServer, uiServer, flowAnalyzer, tester)
 	}
 
 	logBuf.Info("[main] 已退出")
 }
 
-func shutdown(proxyServer *proxy.Server, uiServer *ui.Server, flowAnalyzer *flow.Analyzer) {
+func shutdown(proxyServer *proxy.Server, uiServer *ui.Server, flowAnalyzer *flow.Analyzer, tester *speed.Tester) {
 	// 关闭系统代理（恢复正常网络）
 	if err := sysproxy.Disable(); err != nil {
 		// 关闭代理失败不影响程序退出
@@ -181,32 +174,7 @@ func shutdown(proxyServer *proxy.Server, uiServer *ui.Server, flowAnalyzer *flow
 	proxyServer.Stop(ctx)
 	uiServer.Stop()
 	flowAnalyzer.Stop()
-}
-
-// buildDNSUpstreams 从字符串地址列表构建 DNS 上游配置，自动识别模式
-func buildDNSUpstreams(addrs []string) []dns.Upstream {
-	ups := make([]dns.Upstream, 0, len(addrs))
-	for _, addr := range addrs {
-		up := dns.Upstream{Addr: addr}
-		switch {
-		case strings.HasPrefix(addr, "https://"):
-			up.Mode = "doh"
-		case strings.HasSuffix(addr, ":853"):
-			up.Mode = "dot"
-			// 尝试从地址中推断 SNI
-			if strings.HasPrefix(addr, "223.5.5.5:") || strings.HasPrefix(addr, "223.6.6.6:") {
-				up.SNI = "dns.alidns.com"
-			} else if strings.HasPrefix(addr, "8.8.8.8:") || strings.HasPrefix(addr, "8.8.4.4:") {
-				up.SNI = "dns.google"
-			} else if strings.HasPrefix(addr, "1.1.1.1:") || strings.HasPrefix(addr, "1.0.0.1:") {
-				up.SNI = "cloudflare-dns.com"
-			}
-		case addr == "system":
-			up.Mode = "system"
-		default:
-			up.Mode = "udp"
-		}
-		ups = append(ups, up)
+	if tester != nil {
+		tester.Stop()
 	}
-	return ups
 }
