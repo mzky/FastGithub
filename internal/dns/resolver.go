@@ -20,9 +20,22 @@ import (
 // 支持多种解析方式：UDP、TCP、DoT（DNS over TLS）、DoH（DNS over HTTPS）、系统 DNS
 type Resolver struct {
 	upstreams []Upstream
+	health    map[string]*upstreamHealth // 按上游地址记录健康状态
 	mu        sync.RWMutex
 	cache     map[string]*cacheItem
 }
+
+// upstreamHealth 单个上游的健康状态
+type upstreamHealth struct {
+	failures     int       // 连续失败次数
+	cooldownUntil time.Time // 冷却截止时间（期间跳过该上游）
+}
+
+// 冷却与恢复参数
+const (
+	cooldownAfter = 2 // 连续失败达到该次数后进入冷却
+	cooldownDur   = 1 * time.Minute
+)
 
 // Upstream DNS 上游配置
 type Upstream struct {
@@ -45,6 +58,7 @@ func NewResolver(addrs []string) *Resolver {
 	}
 	return &Resolver{
 		upstreams: ups,
+		health:    make(map[string]*upstreamHealth),
 		cache:     make(map[string]*cacheItem),
 	}
 }
@@ -53,6 +67,7 @@ func NewResolver(addrs []string) *Resolver {
 func NewResolverWithUpstreams(ups []Upstream) *Resolver {
 	return &Resolver{
 		upstreams: ups,
+		health:    make(map[string]*upstreamHealth),
 		cache:     make(map[string]*cacheItem),
 	}
 }
@@ -65,6 +80,7 @@ func (r *Resolver) SetUpstreams(addrs []string) {
 	}
 	r.mu.Lock()
 	r.upstreams = ups
+	r.health = make(map[string]*upstreamHealth)
 	r.mu.Unlock()
 }
 
@@ -108,32 +124,50 @@ func (r *Resolver) Resolve(domain string) ([]net.IP, error) {
 	return ips, nil
 }
 
-// query 向所有上游并发查询 A 记录
+// query 向所有可用（未冷却）的上游并发查询 A 记录
 func (r *Resolver) query(domain string) ([]net.IP, uint32, error) {
 	r.mu.RLock()
 	upstreams := make([]Upstream, len(r.upstreams))
 	copy(upstreams, r.upstreams)
 	r.mu.RUnlock()
 
-	if len(upstreams) == 0 {
-		return nil, 0, fmt.Errorf("no dns upstream configured")
+	// 过滤掉处于冷却期的上游（被屏蔽/连续失败）
+	ups := upstreams[:0]
+	for _, u := range upstreams {
+		key := upstreamKey(u)
+		r.mu.RLock()
+		h := r.health[key]
+		var cooled bool
+		if h != nil && time.Now().Before(h.cooldownUntil) {
+			cooled = true
+		}
+		r.mu.RUnlock()
+		if !cooled {
+			ups = append(ups, u)
+		}
+	}
+
+	if len(ups) == 0 {
+		return nil, 0, fmt.Errorf("all dns upstreams in cooldown")
 	}
 
 	type result struct {
+		key string
 		ips []net.IP
 		ttl uint32
 		err error
 	}
 
-	results := make(chan result, len(upstreams))
+	results := make(chan result, len(ups))
 	var wg sync.WaitGroup
 
-	for _, up := range upstreams {
+	for _, up := range ups {
 		wg.Add(1)
 		go func(u Upstream) {
 			defer wg.Done()
+			key := upstreamKey(u)
 			ips, ttl, err := r.queryUpstream(u, domain)
-			results <- result{ips: ips, ttl: ttl, err: err}
+			results <- result{key: key, ips: ips, ttl: ttl, err: err}
 		}(up)
 	}
 
@@ -144,12 +178,14 @@ func (r *Resolver) query(domain string) ([]net.IP, uint32, error) {
 
 	var minTTL uint32 = 600
 	ipSet := make(map[string]net.IP)
-	var errCount int
+	var failedCount int
 	for res := range results {
 		if res.err != nil {
-			errCount++
+			failedCount++
+			r.markFail(res.key)
 			continue
 		}
+		r.markSuccess(res.key)
 		if res.ttl > 0 && res.ttl < minTTL {
 			minTTL = res.ttl
 		}
@@ -159,7 +195,7 @@ func (r *Resolver) query(domain string) ([]net.IP, uint32, error) {
 	}
 
 	if len(ipSet) == 0 {
-		return nil, 0, fmt.Errorf("all dns upstreams failed (%d errors)", errCount)
+		return nil, 0, fmt.Errorf("all dns upstreams failed (%d/%d)", failedCount, len(ups))
 	}
 
 	ips := make([]net.IP, 0, len(ipSet))
@@ -167,6 +203,43 @@ func (r *Resolver) query(domain string) ([]net.IP, uint32, error) {
 		ips = append(ips, ip)
 	}
 	return ips, minTTL, nil
+}
+
+// markSuccess 标记上游成功（重置连续失败计数）
+func (r *Resolver) markSuccess(key string) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	h := r.health[key]
+	if h == nil {
+		r.health[key] = &upstreamHealth{}
+		return
+	}
+	h.failures = 0
+	h.cooldownUntil = time.Time{}
+}
+
+// markFail 标记上游失败；连续失败达到阈值后进入冷却
+func (r *Resolver) markFail(key string) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	h := r.health[key]
+	if h == nil {
+		h = &upstreamHealth{}
+		r.health[key] = h
+	}
+	h.failures++
+	if h.failures >= cooldownAfter {
+		h.cooldownUntil = time.Now().Add(cooldownDur)
+		h.failures = 0
+	}
+}
+
+// upstreamKey 生成上游的唯一标识（用于健康状态跟踪）
+func upstreamKey(u Upstream) string {
+	if u.Mode == "" {
+		return u.Addr
+	}
+	return u.Mode + "|" + u.Addr
 }
 
 // queryUpstream 向单个上游查询

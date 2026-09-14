@@ -1,20 +1,14 @@
 # Binaries
-fastgithub
-fastgithub.exe
 *.exe
 
 # Build output
 dist/
 
 # Certificates and keys
-cacert/
 *.pem
 *.key
 *.cer
 *.crt
-
-# Go
-vendor/
 
 # IDE
 .vscode/

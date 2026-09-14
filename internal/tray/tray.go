@@ -15,11 +15,11 @@ import (
 
 // Manager 系统托盘管理器
 type Manager struct {
-	flow       *flow.Analyzer
-	logBuf     *logger.Buffer
-	uiAddr     string
-	proxyAddr  string
-	onQuit     func()
+	flow        *flow.Analyzer
+	logBuf      *logger.Buffer
+	uiAddr      string
+	proxyAddr   string
+	onQuit      func()
 	onCheckUpdate func()
 }
 
@@ -61,6 +61,14 @@ func (m *Manager) onReady() {
 	// 状态菜单项
 	mStatus := systray.AddMenuItem("运行中", "FastGithub 运行状态")
 	mStatus.Disable()
+
+	// 打开系统代理设置
+	mSysProxy := systray.AddMenuItem("打开系统代理设置", "打开系统的代理配置窗口")
+	go func() {
+		for range mSysProxy.ClickedCh {
+			openProxySettings()
+		}
+	}()
 
 	systray.AddSeparator()
 
@@ -121,6 +129,18 @@ func (m *Manager) onReady() {
 
 func (m *Manager) onExit() {
 	m.logBuf.Info("[tray] 系统托盘已退出")
+}
+
+// openProxySettings 打开系统代理设置窗口（Windows）
+func openProxySettings() {
+	if runtime.GOOS == "windows" {
+		// 优先使用现代设置界面（ms-settings:network-proxy）
+		if err := exec.Command("cmd", "/c", "start ms-settings:network-proxy").Run(); err == nil {
+			return
+		}
+		// 回退到旧的 Internet 选项（inetcpl.cpl，第 4 页为连接/代理设置）
+		exec.Command("cmd", "/c", "start inetcpl.cpl,4").Start()
+	}
 }
 
 // openBrowser 在浏览器中打开 URL
