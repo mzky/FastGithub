@@ -1,1 +1,26 @@
- 
+# Binaries
+fastgithub
+fastgithub.exe
+*.exe
+
+# Build output
+dist/
+
+# Certificates and keys
+cacert/
+*.pem
+*.key
+*.cer
+*.crt
+
+# Go
+vendor/
+
+# IDE
+.vscode/
+.idea/
+
+# OS
+.DS_Store
+Thumbs.db
+.trae

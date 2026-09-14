@@ -1,0 +1,63 @@
+{
+  "proxy": {
+    "listen": "127.0.0.1:38457"
+  },
+  "ui": {
+    "listen": "127.0.0.1:38458"
+  },
+  "dns": {
+    "server": "223.5.5.5:53",
+    "upstreams": [
+      "https://dns.alidns.com/resolve",
+      "223.5.5.5:853",
+      "223.6.6.6:853",
+      "8.8.8.8:53",
+      "1.1.1.1:53",
+      "system"
+    ]
+  },
+  "speed_test": {
+    "concurrent": 10,
+    "timeout": 2000000000,
+    "cache_ttl": 300000000000
+  },
+  "update": {
+    "auto_check": true,
+    "check_interval": 86400000000000,
+    "repo": "creazyboyone/fastgithub",
+    "prerelease": false
+  },
+  "cert_dir": "cacert",
+  "domains": [
+    {
+      "name": "GitHub",
+      "patterns": ["github.com", "*.github.com"],
+      "sni_patterns": ["github.com"]
+    },
+    {
+      "name": "GitHub Assets",
+      "patterns": ["githubusercontent.com", "*.githubusercontent.com"],
+      "sni_patterns": ["raw.githubusercontent.com"]
+    },
+    {
+      "name": "GitHub API",
+      "patterns": ["api.github.com"],
+      "sni_patterns": ["api.github.com"]
+    },
+    {
+      "name": "GitHub Gist",
+      "patterns": ["gist.github.com"],
+      "sni_patterns": ["gist.github.com"]
+    },
+    {
+      "name": "GitHub Pages",
+      "patterns": ["github.io", "*.github.io"],
+      "sni_patterns": ["pages.github.com"]
+    },
+    {
+      "name": "GitHub Releases",
+      "patterns": ["objects.githubusercontent.com", "*.objects.githubusercontent.com"],
+      "sni_patterns": ["objects.githubusercontent.com"]
+    }
+  ]
+}
