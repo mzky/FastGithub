@@ -13,7 +13,7 @@ import (
 )
 
 func TestNewTester(t *testing.T) {
-	tester := NewTester()
+	tester := NewTester(Options{})
 	defer tester.Stop()
 	if tester == nil {
 		t.Fatal("NewTester returned nil")
@@ -21,11 +21,15 @@ func TestNewTester(t *testing.T) {
 }
 
 func TestClearCache(t *testing.T) {
-	tester := NewTester()
+	tester := NewTester(Options{})
 	defer tester.Stop()
 
 	tester.mu.Lock()
-	tester.best["test.com"] = bestEntry{ip: net.ParseIP("1.1.1.1"), updated: time.Now()}
+	tester.best["test.com"] = bestEntry{
+		ips:     []net.IP{net.ParseIP("1.1.1.1")},
+		updated: time.Now(),
+		failed:  make(map[string]time.Time),
+	}
 	tester.mu.Unlock()
 
 	tester.ClearCache()
@@ -71,20 +75,20 @@ func TestMeasureDomainIntegration(t *testing.T) {
 	host, _, _ := net.SplitHostPort(addr)
 	ip := net.ParseIP(host)
 
-	tester := NewTester()
+	tester := NewTester(Options{})
 	defer tester.Stop()
 
-	best, err := tester.measureDomain("localhost", []net.IP{ip})
+	ips, err := tester.measureDomain("localhost", []net.IP{ip})
 	if err != nil {
 		t.Fatalf("measureDomain error: %v", err)
 	}
-	if best == nil {
-		t.Error("measureDomain returned nil")
+	if len(ips) == 0 {
+		t.Fatal("measureDomain returned empty list")
 	}
-	if !best.Equal(ip) {
-		t.Errorf("expected best IP %s, got %s", ip, best)
+	if !ips[0].Equal(ip) {
+		t.Errorf("expected best IP %s, got %s", ip, ips[0])
 	}
-	t.Logf("best IP: %s", best)
+	t.Logf("best IP: %s", ips[0])
 }
 
 // generateSelfSignedCert 生成自签证书用于测试

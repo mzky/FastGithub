@@ -43,9 +43,11 @@ type UIConfig struct {
 
 // SpeedTestConfig 测速配置
 type SpeedTestConfig struct {
-	Concurrent int           `json:"concurrent"`
-	Timeout    time.Duration `json:"timeout"`
-	CacheTTL   time.Duration `json:"cache_ttl"`
+	Concurrent int           `json:"concurrent"`  // 候选 IP 探测并发上限
+	Timeout    time.Duration `json:"timeout"`     // 单次候选 IP 探测超时
+	CacheTTL   time.Duration `json:"cache_ttl"`   // 后台重测间隔（最优 IP 缓存有效期）
+	CoolDown   time.Duration `json:"cool_down"`   // 失败 IP 冷却时长，冷却期内自动跳过
+	ProbeCount int           `json:"probe_count"` // 代理每次连接最多尝试的候选 IP 数
 }
 
 // UpdateConfig 更新配置
@@ -111,6 +113,12 @@ func (m *Manager) Load() error {
 	}
 	if cfg.SpeedTest.CacheTTL == 0 {
 		cfg.SpeedTest.CacheTTL = 5 * time.Minute
+	}
+	if cfg.SpeedTest.CoolDown == 0 {
+		cfg.SpeedTest.CoolDown = 30 * time.Second
+	}
+	if cfg.SpeedTest.ProbeCount == 0 {
+		cfg.SpeedTest.ProbeCount = 4
 	}
 	if cfg.CertDir == "" {
 		cfg.CertDir = "cacert"

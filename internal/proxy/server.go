@@ -119,15 +119,14 @@ func (s *Server) handleConnect(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// 建立到目标服务器的连接（使用最优 IP）
-	targetAddr, err := s.resolveTarget(serverName, port)
-	if err != nil {
-		s.logBuf.Debug("[proxy] connect %s fallback to direct: %v", host, err)
-		targetAddr = net.JoinHostPort(serverName, port)
-	}
-
+	// 建立到目标服务器的连接（配置域名逐个候选 IP 重试，失败才直连）
+	targetAddr := net.JoinHostPort(serverName, port)
 	var d net.Dialer
-	targetConn, err := d.DialContext(r.Context(), "tcp", targetAddr)
+	targetConn, err := s.dialTarget(r.Context(), serverName, port)
+	if err != nil {
+		// 非代理域名 / 候选 IP 全部失败时回退为直连
+		targetConn, err = d.DialContext(r.Context(), "tcp", targetAddr)
+	}
 	if err != nil {
 		clientConn.Write([]byte("HTTP/1.1 502 Bad Gateway\r\n\r\n"))
 		clientConn.Close()
@@ -217,40 +216,33 @@ func (s *Server) director(req *http.Request) {
 	req.Header.Del("Proxy-Connection")
 }
 
-// dialContext 自定义 TCP 拨号：对配置域名使用最优 IP
+// dialContext 自定义 TCP 拨号：对配置域名逐个候选 IP 重试
 func (s *Server) dialContext(ctx context.Context, network, addr string) (net.Conn, error) {
 	host, port, err := net.SplitHostPort(addr)
 	if err != nil {
 		return nil, err
 	}
 
-	target, err := s.resolveTarget(host, port)
+	conn, err := s.dialTarget(ctx, host, port)
 	if err != nil {
+		// 非代理域名 / 候选 IP 全部失败时回退为直连
 		s.logBuf.Debug("[proxy] dial %s fallback: %v", addr, err)
-		target = addr
-	}
-
-	var d net.Dialer
-	conn, err := d.DialContext(ctx, network, target)
-	if err != nil {
-		return nil, err
+		var d net.Dialer
+		conn, err = d.DialContext(ctx, network, addr)
+		if err != nil {
+			return nil, err
+		}
 	}
 
 	// 包装连接用于流量统计（HTTP 代理模式下）
 	return &flowConn{Conn: conn, flow: s.flow, upload: false}, nil
 }
 
-// dialTLSContext 自定义 TLS 拨号：对配置域名使用最优 IP 与 SNI 覆盖
+// dialTLSContext 自定义 TLS 拨号：对配置域名逐个候选 IP 重试，并覆盖 SNI
 func (s *Server) dialTLSContext(ctx context.Context, network, addr string) (net.Conn, error) {
 	host, port, err := net.SplitHostPort(addr)
 	if err != nil {
 		return nil, err
-	}
-
-	target, err := s.resolveTarget(host, port)
-	if err != nil {
-		s.logBuf.Debug("[proxy] dial tls %s fallback: %v", addr, err)
-		target = addr
 	}
 
 	serverName := s.cfg.ResolveSNI(host)
@@ -258,10 +250,16 @@ func (s *Server) dialTLSContext(ctx context.Context, network, addr string) (net.
 		serverName = host
 	}
 
-	var d net.Dialer
-	conn, err := d.DialContext(ctx, network, target)
+	// 先建立 TCP 连接（配置域名逐个候选 IP 重试）
+	conn, err := s.dialTarget(ctx, host, port)
 	if err != nil {
-		return nil, err
+		// 非代理域名 / 候选 IP 全部失败时回退为直连
+		s.logBuf.Debug("[proxy] dial tls %s fallback: %v", addr, err)
+		var d net.Dialer
+		conn, err = d.DialContext(ctx, network, addr)
+		if err != nil {
+			return nil, err
+		}
 	}
 
 	// 包装基础连接用于下载流量统计
@@ -278,20 +276,53 @@ func (s *Server) dialTLSContext(ctx context.Context, network, addr string) (net.
 	return tlsConn, nil
 }
 
-// resolveTarget 对配置域名返回最优 IP:port
-func (s *Server) resolveTarget(host, port string) (string, error) {
+// dialTarget 对配置域名逐个尝试候选 IP 建立真实 TCP 连接。
+// 每失败一次都将该 IP 标记为失败并自动切换下一个候选，全部失败才返回错误。
+// 注意：只用真实拨号结果判定，避免"TCP 预检通过、实际连接却被重置"的情况。
+func (s *Server) dialTarget(ctx context.Context, host, port string) (net.Conn, error) {
 	if s.cfg.FindDomain(host) == nil {
-		return "", fmt.Errorf("domain not configured")
+		return nil, fmt.Errorf("domain not configured")
 	}
 
-	bestIP, err := s.tester.BestIP(host)
-	if err != nil {
-		return "", err
-	}
+	var lastErr error
+	tried := make(map[string]struct{}) // 本次调用已尝试过的 IP，避免重复拨号
+	maxAttempts := s.resolveAttempts()
+	for attempt := 0; attempt < maxAttempts; attempt++ {
+		bestIP, err := s.tester.BestIP(host)
+		if err != nil {
+			return nil, err
+		}
 
-	target := net.JoinHostPort(bestIP.String(), port)
-	s.logBuf.Debug("[proxy] %s -> %s", host, target)
-	return target, nil
+		key := bestIP.String()
+		if _, done := tried[key]; done {
+			// 候选列表已拨完且无新 IP，直接放弃本路，避免对同一批 IP 反复重拨
+			break
+		}
+		tried[key] = struct{}{}
+
+		target := net.JoinHostPort(key, port)
+		dialCtx, cancel := context.WithTimeout(ctx, 3*time.Second)
+		conn, err := new(net.Dialer).DialContext(dialCtx, "tcp", target)
+		cancel()
+		if err == nil {
+			return conn, nil
+		}
+
+		// 该 IP 真实拨号失败，标记失败并切换下一个候选
+		lastErr = err
+		s.tester.MarkIPFailed(host, bestIP)
+		s.logBuf.Debug("[proxy] %s ip %s unreachable (%v), switch to next", host, key, err)
+	}
+	return nil, lastErr
+}
+
+// resolveAttempts 返回每次连接最多尝试的候选 IP 数量（读配置，缺省 4）
+func (s *Server) resolveAttempts() int {
+	attempts := 4
+	if c := s.cfg.Get().SpeedTest.ProbeCount; c > 0 {
+		attempts = c
+	}
+	return attempts
 }
 
 // hostOnly 从 host:port 中提取 host

@@ -4,6 +4,7 @@ package tray
 
 import (
 	"fmt"
+	"os"
 	"os/exec"
 	"runtime"
 
@@ -11,6 +12,12 @@ import (
 	"github.com/creazyboyone/fastgithub/internal/flow"
 	"github.com/creazyboyone/fastgithub/internal/logger"
 	"github.com/creazyboyone/fastgithub/internal/version"
+	"golang.org/x/sys/windows/registry"
+)
+
+const (
+	autoStartRunKey   = `Software\Microsoft\Windows\CurrentVersion\Run`
+	autoStartValue    = "FastGithub"
 )
 
 // Manager 系统托盘管理器
@@ -62,11 +69,28 @@ func (m *Manager) onReady() {
 	mStatus := systray.AddMenuItem("运行中", "FastGithub 运行状态")
 	mStatus.Disable()
 
-	// 打开系统代理设置
-	mSysProxy := systray.AddMenuItem("打开系统代理设置", "打开系统的代理配置窗口")
+	// 系统代理设置
+	mSysProxy := systray.AddMenuItem("系统代理设置", "打开系统的代理配置窗口")
 	go func() {
 		for range mSysProxy.ClickedCh {
 			openProxySettings()
+		}
+	}()
+
+	// 开机启动
+	mAutoStart := systray.AddMenuItem("开机启动", "是否随 Windows 开机自动启动")
+	if m.autoStartEnabled() {
+		mAutoStart.Check()
+	}
+	go func() {
+		for range mAutoStart.ClickedCh {
+			enable := !mAutoStart.Checked()
+			if enable {
+				mAutoStart.Check()
+			} else {
+				mAutoStart.Uncheck()
+			}
+			m.setAutoStart(enable)
 		}
 	}()
 
@@ -129,6 +153,52 @@ func (m *Manager) onReady() {
 
 func (m *Manager) onExit() {
 	m.logBuf.Info("[tray] 系统托盘已退出")
+}
+
+// autoStartEnabled 查询当前是否已设置开机启动（仅 Windows，通过注册表 Run 键）
+func (m *Manager) autoStartEnabled() bool {
+	if runtime.GOOS != "windows" {
+		return false
+	}
+	k, err := registry.OpenKey(registry.CURRENT_USER, autoStartRunKey, registry.QUERY_VALUE)
+	if err != nil {
+		return false
+	}
+	defer k.Close()
+	_, _, err = k.GetStringValue(autoStartValue)
+	return err == nil
+}
+
+// setAutoStart 设置开机启动（Windows 下写入/删除 HKCU 注册表 Run 键）
+func (m *Manager) setAutoStart(enable bool) {
+	if runtime.GOOS != "windows" {
+		return
+	}
+	k, err := registry.OpenKey(registry.CURRENT_USER, autoStartRunKey, registry.QUERY_VALUE|registry.SET_VALUE)
+	if err != nil {
+		m.logBuf.Error("[tray] 打开开机启动注册表键失败: %v", err)
+		return
+	}
+	defer k.Close()
+
+	if enable {
+		exe, err := os.Executable()
+		if err != nil {
+			m.logBuf.Error("[tray] 获取程序路径失败: %v", err)
+			return
+		}
+		if err := k.SetStringValue(autoStartValue, `"`+exe+`"`); err != nil {
+			m.logBuf.Error("[tray] 设置开机启动失败: %v", err)
+			return
+		}
+		m.logBuf.Info("[tray] 已开启开机启动 (%s)", exe)
+	} else {
+		if err := k.DeleteValue(autoStartValue); err != nil {
+			m.logBuf.Error("[tray] 关闭开机启动失败: %v", err)
+			return
+		}
+		m.logBuf.Info("[tray] 已关闭开机启动")
+	}
 }
 
 // openProxySettings 打开系统代理设置窗口（Windows）

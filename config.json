@@ -7,9 +7,11 @@
     "listen": "127.0.0.1:38458"
   },
   "speed_test": {
-    "concurrent": 10,
+    "concurrent": 16,
     "timeout": 2000000000,
-    "cache_ttl": 300000000000
+    "cache_ttl": 300000000000,
+    "cool_down": 30000000000,
+    "probe_count": 4
   },
   "update": {
     "auto_check": true,

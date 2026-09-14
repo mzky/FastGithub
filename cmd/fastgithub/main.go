@@ -59,7 +59,13 @@ func main() {
 	logBuf.Info("[main] CA 证书加载成功 (路径: %s)", certDir)
 
 	// 3. 初始化 IP 池测速器（后台探测 GitHub 官方 IP 池，无需 DNS）
-	tester := speed.NewTester()
+	st := cfg.Get().SpeedTest
+	tester := speed.NewTester(speed.Options{
+		Concurrent: st.Concurrent,
+		Timeout:    st.Timeout,
+		Interval:   st.CacheTTL,
+		CoolDown:   st.CoolDown,
+	})
 	logBuf.Info("[main] GitHub IP 池测速器初始化完成")
 
 	// 4. 初始化流量分析器
@@ -75,6 +81,10 @@ func main() {
 	go func() {
 		proxyErr <- proxyServer.Run(proxyAddr)
 	}()
+
+	// 代理启动后，通过本地代理打通 api.github.com/meta 并刷新官方 IP 池
+	// （直连该地址不通时也走代理，成功后落盘供下次复用）
+	go tester.WarmProxyPool(proxyAddr)
 
 	// 7. 启动 Web UI
 	uiAddr := cfg.Get().UI.Listen
@@ -144,6 +154,11 @@ func main() {
 		})
 		// 阻塞运行托盘消息循环（必须在主 goroutine）
 		trayMgr.Run()
+
+		// 托盘消息循环结束（例如系统注销、托盘被迫退出等，未走"退出"菜单），
+		// 此时 onQuit 不会触发，需在这里统一执行清理以关闭系统代理
+		logBuf.Info("[main] 托盘消息循环结束，执行清理...")
+		shutdown(proxyServer, uiServer, flowAnalyzer, tester)
 	} else {
 		// 无托盘模式：等待信号或服务退出
 		sigCh := make(chan os.Signal, 1)
