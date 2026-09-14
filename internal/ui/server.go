@@ -7,16 +7,20 @@ import (
 	"strconv"
 	"time"
 
+	"github.com/creazyboyone/fastgithub/internal/config"
 	"github.com/creazyboyone/fastgithub/internal/flow"
 	"github.com/creazyboyone/fastgithub/internal/logger"
+	"github.com/creazyboyone/fastgithub/internal/sysproxy"
 	"github.com/creazyboyone/fastgithub/internal/version"
 )
 
 // Server Web UI 服务器
 type Server struct {
-	flow   *flow.Analyzer
-	logBuf *logger.Buffer
-	http   *http.Server
+	flow      *flow.Analyzer
+	logBuf    *logger.Buffer
+	http      *http.Server
+	cfg       *config.Manager
+	proxyAddr string
 }
 
 // NewServer 创建 Web UI 服务器
@@ -31,6 +35,7 @@ func NewServer(flow *flow.Analyzer, logBuf *logger.Buffer) *Server {
 	mux.HandleFunc("/api/stats", s.handleStats)
 	mux.HandleFunc("/api/logs", s.handleLogs)
 	mux.HandleFunc("/api/version", s.handleVersion)
+	mux.HandleFunc("/proxy.pac", s.handlePAC)
 
 	s.http = &http.Server{
 		Handler:      mux,
@@ -39,6 +44,12 @@ func NewServer(flow *flow.Analyzer, logBuf *logger.Buffer) *Server {
 		IdleTimeout:  60 * time.Second,
 	}
 	return s
+}
+
+// SetPACSource 设置 PAC 脚本生成所需的数据源（配置与代理地址）
+func (s *Server) SetPACSource(cfg *config.Manager, proxyAddr string) {
+	s.cfg = cfg
+	s.proxyAddr = proxyAddr
 }
 
 // Run 启动 Web UI 服务器
@@ -98,6 +109,26 @@ func (s *Server) handleVersion(w http.ResponseWriter, r *http.Request) {
 		"version":   version.Version,
 		"build_time": version.BuildTime,
 	})
+}
+
+// handlePAC 返回 PAC 自动配置脚本（仅代理配置的 GitHub 相关域名）
+func (s *Server) handlePAC(w http.ResponseWriter, r *http.Request) {
+	proxyAddr := s.proxyAddr
+	if proxyAddr == "" {
+		proxyAddr = "127.0.0.1:38457"
+	}
+
+	var patterns []string
+	if s.cfg != nil {
+		conf := s.cfg.Get()
+		for _, d := range conf.Domains {
+			patterns = append(patterns, d.Patterns...)
+		}
+	}
+
+	pac := sysproxy.BuildPAC(proxyAddr, patterns)
+	w.Header().Set("Content-Type", "application/x-ns-proxy-autoconfig; charset=utf-8")
+	w.Write([]byte(pac))
 }
 
 // indexHTML 主页面 HTML

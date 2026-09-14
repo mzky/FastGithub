@@ -25,7 +25,16 @@ type Config struct {
 
 // ProxyConfig 代理配置
 type ProxyConfig struct {
-	Listen string `json:"listen"`
+	Listen            string `json:"listen"`
+	EnableSystemProxy *bool  `json:"enable_system_proxy"` // 启动时自动开启系统代理、退出时自动关闭；nil 时默认为 true
+}
+
+// SystemProxyEnabled 返回是否启用系统代理自动开关（默认为 true）
+func (p *ProxyConfig) SystemProxyEnabled() bool {
+	if p.EnableSystemProxy == nil {
+		return true
+	}
+	return *p.EnableSystemProxy
 }
 
 // UIConfig Web UI 配置

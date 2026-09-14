@@ -1,6 +1,7 @@
 {
   "proxy": {
-    "listen": "127.0.0.1:38457"
+    "listen": "127.0.0.1:38457",
+    "enable_system_proxy": true
   },
   "ui": {
     "listen": "127.0.0.1:38458"
